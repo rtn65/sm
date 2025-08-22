@@ -113,3 +113,71 @@ fn get_next_blocks(
         .filter(|target_id| !context.executed_blocks.contains(target_id))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{BlockConfig, BlockMetadata, Position, SerializedConnection};
+
+    #[test]
+    fn test_simple_linear_workflow() {
+        let workflow = SerializedWorkflow {
+            version: "1.0".to_string(),
+            blocks: vec![
+                SerializedBlock {
+                    id: "starter".to_string(),
+                    position: Position { x: 0.0, y: 0.0 },
+                    config: BlockConfig {
+                        tool: "starter".to_string(),
+                        params: HashMap::new(),
+                    },
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                    metadata: Some(BlockMetadata {
+                        id: "starter".to_string(),
+                        name: Some("Start".to_string()),
+                        description: None,
+                        category: None,
+                    }),
+                    enabled: true,
+                },
+                SerializedBlock {
+                    id: "block-1".to_string(),
+                    position: Position { x: 100.0, y: 100.0 },
+                    config: BlockConfig {
+                        tool: "generic".to_string(),
+                        params: HashMap::new(),
+                    },
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                    metadata: Some(BlockMetadata {
+                        id: "generic".to_string(),
+                        name: Some("Generic Block".to_string()),
+                        description: None,
+                        category: None,
+                    }),
+                    enabled: true,
+                },
+            ],
+            connections: vec![SerializedConnection {
+                source: "starter".to_string(),
+                target: "block-1".to_string(),
+                source_handle: None,
+                target_handle: None,
+            }],
+            loops: HashMap::new(),
+            parallels: HashMap::new(),
+        };
+
+        let result = execute_workflow(workflow);
+
+        assert!(result.success);
+        assert!(result.error.is_none());
+
+        let message = result.output.extra.get("message").unwrap();
+        assert_eq!(
+            message,
+            &serde_json::Value::String("Executed block block-1".to_string())
+        );
+    }
+}
