@@ -268,7 +268,7 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
       logger.debug(`[${requestId}] No workflow variables found for: ${workflowId}`)
     }
 
-    // Serialize and execute the workflow
+    // Serialize the workflow
     logger.debug(`[${requestId}] Serializing workflow: ${workflowId}`)
     const serializedWorkflow = new Serializer().serializeWorkflow(
       mergedStates,
@@ -278,22 +278,56 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
       true // Enable validation during execution
     )
 
-    const executor = new Executor({
-      workflow: serializedWorkflow,
-      currentBlockStates: processedBlockStates,
-      envVarValues: decryptedEnvVars,
-      workflowInput: processedInput,
-      workflowVariables,
-      contextExtensions: {
-        executionId,
-        workspaceId: workflow.workspaceId,
-      },
-    })
+    // Execute the workflow using the Rust binary
+    const { spawn } = await import('child_process')
+    const path = await import('path')
 
-    // Set up logging on the executor
-    loggingSession.setupExecutor(executor)
+    const executeRustWorkflow = (workflowData: any): Promise<any> => {
+      return new Promise((resolve, reject) => {
+        // This path is a guess. It assumes a debug build from the project root.
+        // In a real environment, this should be configurable.
+        const rustExecutablePath = path.join(
+          process.cwd(),
+          'packages/rust-executor/target/debug/rust-executor'
+        )
+        const rustProcess = spawn(rustExecutablePath)
 
-    const result = await executor.execute(workflowId)
+        let stdoutData = ''
+        let stderrData = ''
+
+        rustProcess.stdout.on('data', (data) => {
+          stdoutData += data.toString()
+        })
+
+        rustProcess.stderr.on('data', (data) => {
+          stderrData += data.toString()
+        })
+
+        rustProcess.on('close', (code) => {
+          if (code === 0) {
+            try {
+              const result = JSON.parse(stdoutData)
+              resolve(result)
+            } catch (error) {
+              reject(new Error('Failed to parse JSON from Rust executor: ' + error))
+            }
+          } else {
+            reject(new Error(`Rust executor exited with code ${code}: ${stderrData}`))
+          }
+        })
+
+        rustProcess.on('error', (err) => {
+          reject(new Error('Failed to start Rust executor: ' + err.message))
+        })
+
+        // Write the workflow data to the stdin of the Rust process
+        rustProcess.stdin.write(JSON.stringify(workflowData))
+        rustProcess.stdin.end()
+      })
+    }
+
+    // The Rust executor will need the full workflow definition
+    const result = await executeRustWorkflow(serializedWorkflow)
 
     // Check if we got a StreamingExecution result (with stream + execution properties)
     // For API routes, we only care about the ExecutionResult part, not the stream
