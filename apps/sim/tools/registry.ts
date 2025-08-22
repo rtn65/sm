@@ -16,6 +16,7 @@ import {
   discordSendMessageTool,
 } from '@/tools/discord'
 import { elevenLabsTtsTool } from '@/tools/elevenlabs'
+import { falRunTool } from '@/tools/fal'
 import {
   exaAnswerTool,
   exaFindSimilarLinksTool,
@@ -113,6 +114,7 @@ import {
 } from '@/tools/pinecone'
 import { qdrantFetchTool, qdrantSearchTool, qdrantUpsertTool } from '@/tools/qdrant'
 import { redditGetCommentsTool, redditGetPostsTool, redditHotPostsTool } from '@/tools/reddit'
+import { replicateRunTool } from '@/tools/replicate'
 import { s3GetObjectTool } from '@/tools/s3'
 import { searchTool as serperSearch } from '@/tools/serper'
 import {
@@ -224,6 +226,7 @@ export const tools: Record<string, ToolConfig> = {
   exa_find_similar_links: exaFindSimilarLinksTool,
   exa_answer: exaAnswerTool,
   exa_research: exaResearchTool,
+  fal_run: falRunTool,
   reddit_hot_posts: redditHotPostsTool,
   reddit_get_posts: redditGetPostsTool,
   reddit_get_comments: redditGetCommentsTool,
@@ -305,6 +308,7 @@ export const tools: Record<string, ToolConfig> = {
   qdrant_fetch_points: qdrantFetchTool,
   qdrant_search_vector: qdrantSearchTool,
   qdrant_upsert_points: qdrantUpsertTool,
+  replicate_run: replicateRunTool,
   hunter_discover: hunterDiscoverTool,
   hunter_domain_search: hunterDomainSearchTool,
   hunter_email_finder: hunterEmailFinderTool,
