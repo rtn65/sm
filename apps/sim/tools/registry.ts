@@ -6,6 +6,7 @@ import {
   airtableUpdateRecordTool,
 } from '@/tools/airtable'
 import { arxivGetAuthorPapersTool, arxivGetPaperTool, arxivSearchTool } from '@/tools/arxiv'
+import { bedrockInvokeTool } from '@/tools/bedrock'
 import { browserUseRunTaskTool } from '@/tools/browser_use'
 import { chromadbDeleteTool, chromadbSearchTool, chromadbUpsertTool } from '@/tools/chromadb'
 import { clayPopulateTool } from '@/tools/clay'
@@ -164,6 +165,7 @@ export const tools: Record<string, ToolConfig> = {
   arxiv_search: arxivSearchTool,
   arxiv_get_paper: arxivGetPaperTool,
   arxiv_get_author_papers: arxivGetAuthorPapersTool,
+  bedrock_invoke: bedrockInvokeTool,
   browser_use_run_task: browserUseRunTaskTool,
   chromadb_upsert: chromadbUpsertTool,
   chromadb_search: chromadbSearchTool,
