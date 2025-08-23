@@ -7,6 +7,7 @@ import {
 } from '@/tools/airtable'
 import { arxivGetAuthorPapersTool, arxivGetPaperTool, arxivSearchTool } from '@/tools/arxiv'
 import { browserUseRunTaskTool } from '@/tools/browser_use'
+import { chromadbDeleteTool, chromadbSearchTool, chromadbUpsertTool } from '@/tools/chromadb'
 import { clayPopulateTool } from '@/tools/clay'
 import { confluenceRetrieveTool, confluenceUpdateTool } from '@/tools/confluence'
 import {
@@ -115,7 +116,7 @@ import {
 import { qdrantFetchTool, qdrantSearchTool, qdrantUpsertTool } from '@/tools/qdrant'
 import { redditGetCommentsTool, redditGetPostsTool, redditHotPostsTool } from '@/tools/reddit'
 import { replicateRunTool } from '@/tools/replicate'
-import { s3GetObjectTool } from '@/tools/s3'
+import { s3GetObjectTool, s3VectorSearchTool, s3VectorUpsertTool } from '@/tools/s3'
 import { searchTool as serperSearch } from '@/tools/serper'
 import {
   sharepointCreatePageTool,
@@ -164,6 +165,9 @@ export const tools: Record<string, ToolConfig> = {
   arxiv_get_paper: arxivGetPaperTool,
   arxiv_get_author_papers: arxivGetAuthorPapersTool,
   browser_use_run_task: browserUseRunTaskTool,
+  chromadb_upsert: chromadbUpsertTool,
+  chromadb_search: chromadbSearchTool,
+  chromadb_delete: chromadbDeleteTool,
   openai_embeddings: openAIEmbeddings,
   http_request: httpRequest,
   huggingface_chat: huggingfaceChatTool,
@@ -265,6 +269,8 @@ export const tools: Record<string, ToolConfig> = {
   knowledge_create_document: knowledgeCreateDocumentTool,
   elevenlabs_tts: elevenLabsTtsTool,
   s3_get_object: s3GetObjectTool,
+  s3_vector_search: s3VectorSearchTool,
+  s3_vector_upsert: s3VectorUpsertTool,
   telegram_message: telegramMessageTool,
   clay_populate: clayPopulateTool,
   discord_send_message: discordSendMessageTool,
