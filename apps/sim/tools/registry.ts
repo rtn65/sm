@@ -15,6 +15,7 @@ import {
   discordGetUserTool,
   discordSendMessageTool,
 } from '@/tools/discord'
+import { objectDetectionTool } from '@/tools/object_detection'
 import { elevenLabsTtsTool } from '@/tools/elevenlabs'
 import {
   exaAnswerTool,
@@ -167,6 +168,7 @@ export const tools: Record<string, ToolConfig> = {
   huggingface_chat: huggingfaceChatTool,
   function_execute: functionExecuteTool,
   vision_tool: visionTool,
+  object_detection: objectDetectionTool,
   file_parser: fileParseTool,
   firecrawl_scrape: scrapeTool,
   firecrawl_search: searchTool,
