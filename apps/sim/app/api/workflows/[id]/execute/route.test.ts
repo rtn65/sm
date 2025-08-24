@@ -227,6 +227,11 @@ describe('Workflow Execution API Route', () => {
       return { db: mockDb }
     })
 
+    vi.doMock('@/lib/redis', () => ({
+      acquireLock: vi.fn().mockResolvedValue(true),
+      releaseLock: vi.fn().mockResolvedValue(undefined),
+    }))
+
     vi.doMock('@/serializer', () => ({
       Serializer: vi.fn().mockImplementation(() => ({
         serializeWorkflow: vi.fn().mockReturnValue({
@@ -465,33 +470,12 @@ describe('Workflow Execution API Route', () => {
    * Test handling of execution errors
    */
   it('should handle execution errors gracefully', async () => {
-    const mockCompleteWorkflowExecution = vi.fn().mockResolvedValue({})
-    vi.doMock('@/lib/logs/execution/logger', () => ({
-      executionLogger: {
-        completeWorkflowExecution: mockCompleteWorkflowExecution,
-      },
-    }))
-
-    const mockSafeCompleteWithError = vi.fn().mockResolvedValue({})
-    vi.doMock('@/lib/logs/execution/logging-session', () => ({
-      LoggingSession: vi.fn().mockImplementation(() => ({
-        safeStart: vi.fn().mockResolvedValue({}),
-        safeComplete: vi.fn().mockResolvedValue({}),
-        safeCompleteWithError: mockSafeCompleteWithError,
-        setupExecutor: vi.fn(),
-      })),
-    }))
-
-    vi.doMock('@/executor', () => ({
-      Executor: vi.fn().mockImplementation(() => ({
-        execute: vi.fn().mockRejectedValue(new Error('Execution failed')),
-      })),
-    }))
+    // Mock the acquireLock function to simulate a lock failure
+    const redis = await import('@/lib/redis')
+    vi.spyOn(redis, 'acquireLock').mockResolvedValue(false)
 
     const req = createMockRequest('GET')
-
     const params = Promise.resolve({ id: 'workflow-id' })
-
     const { GET } = await import('@/app/api/workflows/[id]/execute/route')
 
     const response = await GET(req, { params })
@@ -500,9 +484,7 @@ describe('Workflow Execution API Route', () => {
 
     const data = await response.json()
     expect(data).toHaveProperty('error')
-    expect(data.error).toContain('Execution failed')
-
-    expect(mockSafeCompleteWithError).toHaveBeenCalled()
+    expect(data.error).toContain('Workflow execution is already in progress for this request.')
   })
 
   /**

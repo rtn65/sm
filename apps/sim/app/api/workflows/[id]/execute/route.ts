@@ -27,6 +27,7 @@ import {
   type SubscriptionPlan,
   type TriggerType,
 } from '@/services/queue'
+import { acquireLock, releaseLock } from '@/lib/redis'
 import { mergeSubblockState } from '@/stores/workflows/server-utils'
 
 const logger = createLogger('WorkflowExecuteAPI')
@@ -36,10 +37,6 @@ export const runtime = 'nodejs'
 
 // Define the schema for environment variables
 const EnvVarsSchema = z.record(z.string())
-
-// Keep track of running executions to prevent duplicate requests
-// Use a combination of workflow ID and request ID to allow concurrent executions with different inputs
-const runningExecutions = new Set<string>()
 
 // Utility function to filter out logs and workflowConnections from API response
 function createFilteredResult(result: any) {
@@ -68,47 +65,42 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
   const workflowId = workflow.id
   const executionId = uuidv4()
 
-  // Create a unique execution key combining workflow ID and request ID
-  // This allows concurrent executions of the same workflow with different inputs
-  const executionKey = `${workflowId}:${requestId}`
+  const lockKey = `lock:workflow-execution:${workflowId}:${requestId}`
+  const lockAcquired = await acquireLock(lockKey, executionId, 60) // 60-second lock expiry
 
-  // Skip if this exact execution is already running (prevents duplicate requests)
-  if (runningExecutions.has(executionKey)) {
-    logger.warn(`[${requestId}] Execution is already running: ${executionKey}`)
-    throw new Error('Execution is already running')
+  if (!lockAcquired) {
+    logger.warn(`[${requestId}] Execution is already running (lock held): ${lockKey}`)
+    throw new Error('Workflow execution is already in progress for this request.')
   }
 
   const loggingSession = new LoggingSession(workflowId, executionId, 'api', requestId)
 
-  // Rate limiting is now handled before entering the sync queue
-
-  // Check if the user has exceeded their usage limits
-  const usageCheck = await checkServerSideUsageLimits(workflow.userId)
-  if (usageCheck.isExceeded) {
-    logger.warn(`[${requestId}] User ${workflow.userId} has exceeded usage limits`, {
-      currentUsage: usageCheck.currentUsage,
-      limit: usageCheck.limit,
-    })
-    throw new UsageLimitError(
-      usageCheck.message || 'Usage limit exceeded. Please upgrade your plan to continue.'
-    )
-  }
-
-  // Log input to help debug
-  logger.info(
-    `[${requestId}] Executing workflow with input:`,
-    input ? JSON.stringify(input, null, 2) : 'No input provided'
-  )
-
-  // Use input directly for API workflows
-  const processedInput = input
-  logger.info(
-    `[${requestId}] Using input directly for workflow:`,
-    JSON.stringify(processedInput, null, 2)
-  )
-
   try {
-    runningExecutions.add(executionKey)
+    // Check if the user has exceeded their usage limits
+    const usageCheck = await checkServerSideUsageLimits(workflow.userId)
+    if (usageCheck.isExceeded) {
+      logger.warn(`[${requestId}] User ${workflow.userId} has exceeded usage limits`, {
+        currentUsage: usageCheck.currentUsage,
+        limit: usageCheck.limit,
+      })
+      throw new UsageLimitError(
+        usageCheck.message || 'Usage limit exceeded. Please upgrade your plan to continue.'
+      )
+    }
+
+    // Log input to help debug
+    logger.info(
+      `[${requestId}] Executing workflow with input:`,
+      input ? JSON.stringify(input, null, 2) : 'No input provided'
+    )
+
+    // Use input directly for API workflows
+    const processedInput = input
+    logger.info(
+      `[${requestId}] Using input directly for workflow:`,
+      JSON.stringify(processedInput, null, 2)
+    )
+
     logger.info(`[${requestId}] Starting workflow execution: ${workflowId}`)
 
     // Load workflow data from deployed state for API executions
@@ -149,51 +141,41 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
     })
 
     // Replace environment variables in the block states
-    const currentBlockStates = await Object.entries(mergedStates).reduce(
-      async (accPromise, [id, block]) => {
-        const acc = await accPromise
-        acc[id] = await Object.entries(block.subBlocks).reduce(
-          async (subAccPromise, [key, subBlock]) => {
-            const subAcc = await subAccPromise
-            let value = subBlock.value
+    const currentBlockStates: Record<string, Record<string, any>> = {}
+    for (const [id, block] of Object.entries(mergedStates)) {
+      const subBlocks: Record<string, any> = {}
+      for (const [key, subBlock] of Object.entries(block.subBlocks)) {
+        let value = subBlock.value
 
-            // If the value is a string and contains environment variable syntax
-            if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
-              const matches = value.match(/{{([^}]+)}}/g)
-              if (matches) {
-                // Process all matches sequentially
-                for (const match of matches) {
-                  const varName = match.slice(2, -2) // Remove {{ and }}
-                  const encryptedValue = variables[varName]
-                  if (!encryptedValue) {
-                    throw new Error(`Environment variable "${varName}" was not found`)
-                  }
+        // If the value is a string and contains environment variable syntax
+        if (typeof value === 'string' && value.includes('{{') && value.includes('}}')) {
+          const matches = value.match(/{{([^}]+)}}/g)
+          if (matches) {
+            // Process all matches sequentially
+            for (const match of matches) {
+              const varName = match.slice(2, -2) // Remove {{ and }}
+              const encryptedValue = variables[varName]
+              if (!encryptedValue) {
+                throw new Error(`Environment variable "${varName}" was not found`)
+              }
 
-                  try {
-                    const { decrypted } = await decryptSecret(encryptedValue)
-                    value = (value as string).replace(match, decrypted)
-                  } catch (error: any) {
-                    logger.error(
-                      `[${requestId}] Error decrypting environment variable "${varName}"`,
-                      error
-                    )
-                    throw new Error(
-                      `Failed to decrypt environment variable "${varName}": ${error.message}`
-                    )
-                  }
-                }
+              try {
+                const { decrypted } = await decryptSecret(encryptedValue)
+                value = (value as string).replace(match, decrypted)
+              } catch (error: any) {
+                logger.error(
+                  `[${requestId}] Error decrypting environment variable "${varName}"`,
+                  error
+                )
+                throw new Error(`Failed to decrypt environment variable "${varName}": ${error.message}`)
               }
             }
-
-            subAcc[key] = value
-            return subAcc
-          },
-          Promise.resolve({} as Record<string, any>)
-        )
-        return acc
-      },
-      Promise.resolve({} as Record<string, Record<string, any>>)
-    )
+          }
+        }
+        subBlocks[key] = value
+      }
+      currentBlockStates[id] = subBlocks
+    }
 
     // Create a map of decrypted environment variables
     const decryptedEnvVars: Record<string, string> = {}
@@ -268,7 +250,7 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
       logger.debug(`[${requestId}] No workflow variables found for: ${workflowId}`)
     }
 
-    // Serialize the workflow
+    // Serialize and execute the workflow
     logger.debug(`[${requestId}] Serializing workflow: ${workflowId}`)
     const serializedWorkflow = new Serializer().serializeWorkflow(
       mergedStates,
@@ -278,56 +260,22 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
       true // Enable validation during execution
     )
 
-    // Execute the workflow using the Rust binary
-    const { spawn } = await import('child_process')
-    const path = await import('path')
+    const executor = new Executor({
+      workflow: serializedWorkflow,
+      currentBlockStates: processedBlockStates,
+      envVarValues: decryptedEnvVars,
+      workflowInput: processedInput,
+      workflowVariables,
+      contextExtensions: {
+        executionId,
+        workspaceId: workflow.workspaceId,
+      },
+    })
 
-    const executeRustWorkflow = (workflowData: any): Promise<any> => {
-      return new Promise((resolve, reject) => {
-        // This path is a guess. It assumes a debug build from the project root.
-        // In a real environment, this should be configurable.
-        const rustExecutablePath = path.join(
-          process.cwd(),
-          'packages/rust-executor/target/debug/rust-executor'
-        )
-        const rustProcess = spawn(rustExecutablePath)
+    // Set up logging on the executor
+    loggingSession.setupExecutor(executor)
 
-        let stdoutData = ''
-        let stderrData = ''
-
-        rustProcess.stdout.on('data', (data) => {
-          stdoutData += data.toString()
-        })
-
-        rustProcess.stderr.on('data', (data) => {
-          stderrData += data.toString()
-        })
-
-        rustProcess.on('close', (code) => {
-          if (code === 0) {
-            try {
-              const result = JSON.parse(stdoutData)
-              resolve(result)
-            } catch (error) {
-              reject(new Error('Failed to parse JSON from Rust executor: ' + error))
-            }
-          } else {
-            reject(new Error(`Rust executor exited with code ${code}: ${stderrData}`))
-          }
-        })
-
-        rustProcess.on('error', (err) => {
-          reject(new Error('Failed to start Rust executor: ' + err.message))
-        })
-
-        // Write the workflow data to the stdin of the Rust process
-        rustProcess.stdin.write(JSON.stringify(workflowData))
-        rustProcess.stdin.end()
-      })
-    }
-
-    // The Rust executor will need the full workflow definition
-    const result = await executeRustWorkflow(serializedWorkflow)
+    const result = await executor.execute(workflowId)
 
     // Check if we got a StreamingExecution result (with stream + execution properties)
     // For API routes, we only care about the ExecutionResult part, not the stream
@@ -377,7 +325,7 @@ async function executeWorkflow(workflow: any, requestId: string, input?: any): P
 
     throw error
   } finally {
-    runningExecutions.delete(executionKey)
+    await releaseLock(lockKey)
   }
 }
 
